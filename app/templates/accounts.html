@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Comptes{% endblock %}
+{% block content %}
+
+<div class="card mb-6">
+  <h2 class="font-semibold mb-3">Ajouter un compte manuellement</h2>
+  <p class="text-sm text-slate-500 mb-3">
+    Les comptes sont aussi créés automatiquement lors de l'import d'un relevé — ce formulaire sert
+    surtout à pré-créer un compte avant son premier relevé.
+  </p>
+  <form method="post" action="/accounts" class="flex flex-wrap gap-2 items-end">
+    <div>
+      <label class="block text-xs text-slate-500">Nom</label>
+      <input name="name" required class="border rounded px-2 py-1" placeholder="Ex: Livret A" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500">Banque</label>
+      <input name="bank" required class="border rounded px-2 py-1" placeholder="Ex: Boursorama" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500">Type</label>
+      <select name="account_type" class="border rounded px-2 py-1">
+        <option value="courant">Courant</option>
+        <option value="livret">Livret</option>
+        <option value="autre">Autre</option>
+      </select>
+    </div>
+    <button class="bg-slate-900 text-white rounded px-3 py-1">Ajouter</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2 class="font-semibold mb-3">Comptes existants</h2>
+  <table class="data w-full text-sm">
+    <thead><tr><th>Nom</th><th>Banque</th><th>Type</th><th>Réf.</th></tr></thead>
+    <tbody>
+      {% for a in accounts %}
+      <tr>
+        <td>{{ a.name }}</td>
+        <td>{{ a.bank }}</td>
+        <td>{{ a.account_type }}</td>
+        <td>{{ a.external_ref or "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

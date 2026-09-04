@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+{% block title %}Transactions{% endblock %}
+{% block content %}
+
+<form method="get" action="/transactions" class="card mb-4 flex flex-wrap gap-3 items-end">
+  <div>
+    <label class="block text-xs text-slate-500">Période</label>
+    <select name="period_type" class="border rounded px-2 py-1" onchange="this.form.submit()">
+      <option value="month" {{ "selected" if period_type == "month" else "" }}>Mois</option>
+      <option value="year" {{ "selected" if period_type == "year" else "" }}>Année</option>
+      <option value="custom" {{ "selected" if period_type == "custom" else "" }}>Personnalisé</option>
+    </select>
+  </div>
+
+  {% if period_type == "year" %}
+  <div>
+    <label class="block text-xs text-slate-500">Année</label>
+    <input type="number" name="year" value="{{ year }}" class="border rounded px-2 py-1 w-24" />
+  </div>
+  {% elif period_type == "custom" %}
+  <div>
+    <label class="block text-xs text-slate-500">Du</label>
+    <input type="date" name="start" value="{{ start }}" class="border rounded px-2 py-1" />
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500">Au</label>
+    <input type="date" name="end" value="{{ end }}" class="border rounded px-2 py-1" />
+  </div>
+  {% else %}
+  <div>
+    <label class="block text-xs text-slate-500">Mois</label>
+    <input type="month" name="month" value="{{ month }}" class="border rounded px-2 py-1" />
+  </div>
+  {% endif %}
+
+  <div>
+    <label class="block text-xs text-slate-500">Compte</label>
+    <select name="account_id" class="border rounded px-2 py-1">
+      <option value="">Tous</option>
+      {% for id, a in accounts.items() %}
+      <option value="{{ id }}" {{ "selected" if filter_account_id == id else "" }}>{{ a.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <button class="bg-slate-900 text-white rounded px-3 py-1">Filtrer</button>
+  {# Les filtres Catégorie / Interne vivent dans les en-tetes du tableau (facon Excel),
+     pas ici. #}
+  <input type="hidden" name="category" value="{{ filter_category }}" />
+  <input type="hidden" name="internal" value="{{ filter_internal }}" />
+</form>
+
+{# Formulaire porteur des filtres de colonnes: les <select> des en-tetes s'y
+   rattachent via l'attribut form=, ce qui evite d'imbriquer un <form> dans le
+   <table>. Il rejoue les filtres deja actifs pour ne pas les perdre. #}
+<form method="get" action="/transactions" id="col-filter" class="hidden">
+  <input type="hidden" name="period_type" value="{{ period_type }}" />
+  <input type="hidden" name="month" value="{{ month }}" />
+  <input type="hidden" name="year" value="{{ year }}" />
+  <input type="hidden" name="start" value="{{ start }}" />
+  <input type="hidden" name="end" value="{{ end }}" />
+  <input type="hidden" name="account_id" value="{{ filter_account_id or '' }}" />
+</form>
+
+<div class="card">
+  <h2 class="font-semibold mb-3">
+    Transactions — {{ period_label }}
+    <span class="text-xs font-normal text-slate-500">({{ transactions|length }} ligne{{ "s" if transactions|length != 1 else "" }})</span>
+  </h2>
+  <table class="data w-full text-sm">
+    <thead>
+      <tr>
+        <th>Date</th><th>Compte</th><th>Description</th><th>Montant</th>
+        <th title="Montant une fois les remboursements affectés déduits">Après remb.</th>
+        <th>
+          <label class="block">Catégorie</label>
+          <select name="category" form="col-filter" onchange="this.form.submit()"
+                  class="mt-1 border rounded px-1 py-0.5 text-xs font-normal {{ 'bg-sky-50 border-sky-400' if filter_category else '' }}">
+            <option value="">(toutes)</option>
+            {% for c in categories %}
+            <option value="{{ c }}" {{ "selected" if filter_category == c else "" }}>{{ c }}</option>
+            {% endfor %}
+          </select>
+        </th>
+        <th>
+          <label class="block">Interne</label>
+          <select name="internal" form="col-filter" onchange="this.form.submit()"
+                  class="mt-1 border rounded px-1 py-0.5 text-xs font-normal {{ 'bg-sky-50 border-sky-400' if filter_internal else '' }}">
+            <option value="">(tous)</option>
+            <option value="1" {{ "selected" if filter_internal == "1" else "" }}>Oui</option>
+            <option value="0" {{ "selected" if filter_internal == "0" else "" }}>Non</option>
+          </select>
+        </th>
+        <th>Remb.</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in transactions %}
+      {% set effective = effective_by_id[t.id] %}
+      {% set covered = allocated_expense.get(t.id, 0) if t.direction == "debit" else allocated_refund.get(t.id, 0) %}
+      {# Ligne "soldee": depense entierement remboursee, ou remboursement entierement
+         affecte. Elle ne pese plus rien dans les totaux, on l'estompe. #}
+      {% set settled = covered and effective < 0.005 %}
+      <tr class="{{ 'bg-slate-50 text-slate-400' if settled else '' }}">
+        <td>{{ t.date }}</td>
+        <td>{{ accounts[t.account_id].name if t.account_id in accounts else "—" }}</td>
+        <td>
+          {{ t.description_raw }}
+          {% if t.direction == "debit" and covered %}
+            <div class="text-xs {{ 'text-slate-400' if settled else 'text-slate-500' }} flex items-center gap-1">
+              {{ icons.refund() }}
+              remboursé de {{ "%.2f"|format(covered) }} € par
+              {{ refund_count_by_expense.get(t.id, 1) }} remboursement{{ "s" if refund_count_by_expense.get(t.id, 1) > 1 else "" }}
+            </div>
+          {% elif t.direction == "credit" and covered and effective > 0 %}
+            <div class="text-xs text-amber-700">
+              reste {{ "%.2f"|format(effective) }} € à affecter
+            </div>
+          {% endif %}
+        </td>
+        <td class="{{ 'text-slate-400 line-through' if settled else ('text-rose-600' if t.direction == 'debit' else 'text-emerald-600') }}">
+          {{ "-" if t.direction == "debit" else "+" }}{{ "%.2f"|format(t.amount) }} €
+        </td>
+        <td class="{{ 'text-slate-400' if settled or not covered else ('text-rose-600 font-semibold' if t.direction == 'debit' else 'text-emerald-600 font-semibold') }}">
+          {# Pas de signe sur un zero: "-0.00 €" n'a pas de sens. #}
+          {%- if effective < 0.005 -%}
+            0.00 €
+          {%- else -%}
+            {{ "-" if t.direction == "debit" else "+" }}{{ "%.2f"|format(effective) }} €
+          {%- endif -%}
+        </td>
+        <td>
+          {# Plus de bouton de validation: le changement est enregistre des qu'il est
+             fait, comme les filtres de colonnes. #}
+          <form id="tx-form-{{ t.id }}" method="post" action="/transactions/{{ t.id }}/update">
+            <input type="hidden" name="back_query" value="{{ current_query }}" />
+            <select name="category" onchange="this.form.submit()"
+                    class="border rounded px-1 py-0.5 text-xs {{ 'text-slate-400' if settled else '' }}">
+              {% for c in categories %}
+              <option value="{{ c }}" {{ "selected" if t.category == c else "" }}>{{ c }}</option>
+              {% endfor %}
+            </select>
+          </form>
+        </td>
+        <td>
+          <input type="checkbox" form="tx-form-{{ t.id }}" name="is_internal_transfer" value="true"
+                 onchange="this.form.submit()" {{ "checked" if t.is_internal_transfer else "" }} />
+        </td>
+        <td>
+          {% if t.direction == "credit" and not t.is_internal_transfer %}
+          <a href="/transactions/{{ t.id }}/allocate?back_query={{ current_query|urlencode }}"
+             class="text-xs text-sky-700 underline">{{ "Modifier" if covered else "Répartir" }}</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

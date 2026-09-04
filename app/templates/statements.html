@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+{% block title %}Relevés{% endblock %}
+{% block content %}
+
+<div class="card mb-6">
+  <h2 class="font-semibold mb-3">Importer un relevé PDF</h2>
+  <p class="text-sm text-slate-500 mb-3">
+    Le fichier est analysé automatiquement (le compte/sous-compte est détecté dans le document,
+    inutile de le sélectionner à l'avance).
+  </p>
+  <form method="post" action="/statements/upload" enctype="multipart/form-data" id="upload-form">
+    <div
+      id="dropzone"
+      class="border-2 border-dashed border-slate-300 rounded-lg p-6 text-center text-sm text-slate-500 cursor-pointer transition-colors"
+      onclick="document.getElementById('file-input').click()"
+    >
+      <p>Glisser-déposer un PDF ici, ou cliquer pour parcourir</p>
+      <input type="file" id="file-input" name="file" accept="application/pdf" required class="hidden" />
+    </div>
+    <button type="submit" class="mt-3 bg-slate-900 text-white rounded px-3 py-1">Importer</button>
+  </form>
+</div>
+
+<script>
+  (function () {
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("file-input");
+    const form = document.getElementById("upload-form");
+
+    ["dragenter", "dragover"].forEach((evt) =>
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        dropzone.classList.add("border-slate-900", "bg-slate-100");
+      })
+    );
+    ["dragleave", "drop"].forEach((evt) =>
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        dropzone.classList.remove("border-slate-900", "bg-slate-100");
+      })
+    );
+    dropzone.addEventListener("drop", (e) => {
+      const files = e.dataTransfer.files;
+      if (files && files.length > 0) {
+        fileInput.files = files;
+        form.submit();
+      }
+    });
+  })();
+</script>
+
+{% if error %}
+<div class="card border-rose-400 bg-rose-50 mb-6">
+  <p class="font-semibold text-rose-700">Échec de l'import</p>
+  <p class="text-sm text-rose-600">{{ error }}</p>
+</div>
+{% endif %}
+
+{% if results %}
+<div class="card mb-6">
+  <h2 class="font-semibold mb-3">Résultat de l'import</h2>
+  {% for r in results %}
+    {% if r.already_imported %}
+      <p class="text-sm text-slate-500">Ce fichier ({{ r.filename }}) a déjà été importé — ignoré.</p>
+    {% else %}
+      <div class="mb-2 pb-2 border-b last:border-0">
+        <p><span class="font-medium">{{ r.account_name }}</span> —
+          {{ r.inserted }} transaction(s) ajoutée(s)
+          {% if r.skipped_dupes %}, {{ r.skipped_dupes }} doublon(s) ignoré(s){% endif %}
+        </p>
+        {% if r.reconciliation_ok %}
+          <p class="text-sm text-emerald-600 flex items-center gap-1">{{ icons.check(4) }} Solde vérifié</p>
+        {% else %}
+          <p class="text-sm text-amber-600">Écart de solde: {{ "%.2f"|format(r.reconciliation_diff) }} € — à vérifier manuellement.</p>
+        {% endif %}
+      </div>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2 class="font-semibold mb-3">Historique des relevés</h2>
+
+  <form method="get" action="/statements" class="mb-4 flex flex-wrap gap-3 items-end">
+    <div>
+      <label class="block text-xs text-slate-500">Compte</label>
+      <select name="account_id" class="border rounded px-2 py-1">
+        <option value="">Tous</option>
+        {% for id, a in accounts.items() %}
+        <option value="{{ id }}" {{ "selected" if filter_account_id == id else "" }}>{{ a.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500">Du</label>
+      <input type="date" name="start" value="{{ filter_start }}" class="border rounded px-2 py-1" />
+    </div>
+    <div>
+      <label class="block text-xs text-slate-500">Au</label>
+      <input type="date" name="end" value="{{ filter_end }}" class="border rounded px-2 py-1" />
+    </div>
+    <button class="bg-slate-900 text-white rounded px-3 py-1">Filtrer</button>
+  </form>
+
+  <table class="data w-full text-sm">
+    <thead>
+      <tr><th>Fichier</th><th>Compte</th><th>Période</th><th>Solde ouv.</th><th>Solde clôt.</th><th>Statut</th></tr>
+    </thead>
+    <tbody>
+      {% for s in statements %}
+      <tr>
+        <td>
+          {% if s.stored_filename %}
+          <a href="/statements/{{ s.id }}/file" target="_blank" class="text-sky-700 underline">{{ s.filename }}</a>
+          {% else %}
+          {{ s.filename }}
+          {% endif %}
+        </td>
+        <td>{{ accounts[s.account_id].name if s.account_id in accounts else "—" }}</td>
+        <td>{{ s.period_start or "—" }} → {{ s.period_end or "—" }}</td>
+        <td>{{ "%.2f"|format(s.opening_balance) if s.opening_balance is not none else "—" }}</td>
+        <td>{{ "%.2f"|format(s.closing_balance) if s.closing_balance is not none else "—" }}</td>
+        <td>
+          {% if s.reconciliation_ok %}
+            <span class="text-emerald-600">OK</span>
+          {% else %}
+            <span class="text-amber-600">à vérifier ({{ "%.2f"|format(s.reconciliation_diff) if s.reconciliation_diff is not none else "?" }} €)</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

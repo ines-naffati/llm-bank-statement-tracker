@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Suivi de depenses{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+  <nav class="bg-slate-900 text-white">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center gap-6">
+      <a href="/" class="font-semibold text-lg">Suivi de depenses</a>
+      <a href="/statements" class="hover:text-emerald-300">Relevés</a>
+      <a href="/transactions" class="hover:text-emerald-300">Transactions</a>
+      <a href="/forecasts" class="hover:text-emerald-300">Prévisions</a>
+      <a href="/accounts" class="hover:text-emerald-300">Comptes</a>
+    </div>
+  </nav>
+  <main class="{% block container_class %}max-w-5xl{% endblock %} mx-auto px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

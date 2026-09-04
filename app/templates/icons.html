@@ -1,0 +1,43 @@
+{# Icones de l'application: SVG inline, trait fin, jamais d'emoji.
+   Tracees sur une grille 24x24, `currentColor` pour heriter de la couleur du texte,
+   taille reglable via l'argument `size` (en unites Tailwind: 3 = 0.75rem).
+
+   Usage:
+     {% import "icons.html" as icons %}
+     {{ icons.refund() }}  ou  {{ icons.check(4) }}
+#}
+
+{% macro _svg(paths, size) -%}
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+     class="inline-block w-{{ size }} h-{{ size }} shrink-0" aria-hidden="true">{{ paths }}</svg>
+{%- endmacro %}
+
+{# Fleche de retour: un remboursement recu sur une depense. #}
+{% macro refund(size=3) -%}
+{{ _svg('<polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/>'|safe, size) }}
+{%- endmacro %}
+
+{# Validation. #}
+{% macro check(size=4) -%}
+{{ _svg('<polyline points="20 6 9 17 4 12"/>'|safe, size) }}
+{%- endmacro %}
+
+{# Ajout. #}
+{% macro plus(size=4) -%}
+{{ _svg('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'|safe, size) }}
+{%- endmacro %}
+
+{# Retrait. #}
+{% macro minus(size=4) -%}
+{{ _svg('<line x1="5" y1="12" x2="19" y2="12"/>'|safe, size) }}
+{%- endmacro %}
+
+{# Navigation entre les mois du calendrier. #}
+{% macro chevron_left(size=4) -%}
+{{ _svg('<polyline points="15 18 9 12 15 6"/>'|safe, size) }}
+{%- endmacro %}
+
+{% macro chevron_right(size=4) -%}
+{{ _svg('<polyline points="9 18 15 12 9 6"/>'|safe, size) }}
+{%- endmacro %}

@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% import "icons.html" as icons %}
+{% block title %}Prévisions{% endblock %}
+{% block container_class %}max-w-7xl{% endblock %}
+{% block content %}
+
+<div class="card">
+  <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+    <div>
+      <h1 class="text-2xl font-bold tracking-tight">Prévisions enregistrées</h1>
+      <p class="text-sm text-slate-500 mt-1">
+        {% if count %}
+          {{ count }} prévision{{ "s" if count > 1 else "" }} · {{ range_label }}
+        {% else %}
+          Aucune prévision pour l'instant
+        {% endif %}
+      </p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="/forecasts"
+         class="rounded-full px-4 py-2 text-sm {{ 'bg-slate-900 text-white' if not filter_category else 'bg-slate-100 text-slate-600 hover:bg-slate-200' }}">Toutes</a>
+      {% for c in used_categories %}
+      <a href="/forecasts?category={{ c|urlencode }}"
+         class="rounded-full px-4 py-2 text-sm {{ 'bg-slate-900 text-white' if filter_category == c else 'bg-slate-100 text-slate-600 hover:bg-slate-200' }}">{{ c }}</a>
+      {% endfor %}
+    </div>
+  </div>
+
+  {% if conflicts %}
+  <div class="mb-6 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+    <p class="font-semibold mb-1">
+      {{ conflicts|length }} chevauchement{{ "s" if conflicts|length > 1 else "" }} à corriger
+    </p>
+    <p class="mb-2 text-amber-800">
+      Deux prévisions d'une même catégorie ne doivent pas se recouvrir : sur les jours communs,
+      leurs budgets s'additionnent. Raccourcis l'une des deux.
+    </p>
+    <ul class="space-y-1">
+      {% for a, b in conflicts %}
+      <li>
+        <span class="font-semibold">{{ a.category }}</span> :
+        <a href="/forecasts/new?id={{ a.id }}" class="underline">{{ a.period_start.strftime("%d/%m/%Y") }} – {{ a.period_end.strftime("%d/%m/%Y") }}</a>
+        et
+        <a href="/forecasts/new?id={{ b.id }}" class="underline">{{ b.period_start.strftime("%d/%m/%Y") }} – {{ b.period_end.strftime("%d/%m/%Y") }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div class="grid grid-cols-4 gap-8">
+    <div class="col-span-3">
+      {% if rows %}
+      <div class="flex items-center justify-end gap-2 mb-3 text-slate-500">
+        <span class="text-xs mr-1">Échelle</span>
+        <button type="button" id="zoom-out" class="p-1.5 rounded border hover:bg-slate-100" title="Rétrécir l'échelle">
+          {{ icons.minus(4) }}
+        </button>
+        <button type="button" id="zoom-in" class="p-1.5 rounded border hover:bg-slate-100" title="Agrandir l'échelle">
+          {{ icons.plus(4) }}
+        </button>
+        <button type="button" id="zoom-fit" class="px-2 py-1.5 rounded border hover:bg-slate-100 text-xs">
+          Tout voir
+        </button>
+        <button type="button" id="go-today" class="px-2 py-1.5 rounded border hover:bg-slate-100 text-xs">
+          Aujourd'hui
+        </button>
+      </div>
+
+      {# Frise: chaque prevision est une barre positionnee et dimensionnee en jours,
+         multiplies par --day (largeur d'un jour). Zoomer = changer --day; la frise
+         deborde alors du cadre et devient defilante. #}
+      <div id="tl-scroll" class="overflow-x-auto cursor-grab">
+        <div id="tl-track" class="relative" style="width: calc(var(--day) * {{ span_days }}); min-width: 100%">
+          <div class="relative border-b pb-2 mb-4 h-6">
+            {% for m in month_marks %}
+            <span class="absolute text-xs font-medium tracking-wide whitespace-nowrap {{ 'text-emerald-600' if m.is_current else 'text-slate-400' }}"
+                  style="left: calc(var(--day) * {{ m.offset_days }} + 4px)">{{ m.label }}</span>
+            {% endfor %}
+          </div>
+
+          <div class="relative">
+            {% for m in month_marks %}
+              {% if not loop.first %}
+              <div class="absolute top-0 bottom-0 border-l border-dashed border-slate-200"
+                   style="left: calc(var(--day) * {{ m.offset_days }})"></div>
+              {% endif %}
+            {% endfor %}
+            {% if today_offset is not none %}
+            <div class="absolute top-0 bottom-0 border-l-2 border-emerald-500 z-10"
+                 style="left: calc(var(--day) * {{ today_offset }})" title="Aujourd'hui"></div>
+            {% endif %}
+
+            {% for r in rows %}
+            <div class="relative h-20">
+              <a href="/forecasts/new?id={{ r.forecast.id }}"
+                 class="tl-bar absolute top-1 rounded-xl px-4 py-3 block overflow-hidden
+                        {{ 'bg-rose-100 hover:bg-rose-200' if r.over else 'bg-emerald-50 hover:bg-emerald-100' }}"
+                 {# min-width: une barre d'un seul jour resterait illisible. On elargit
+                    alors, quitte a exagerer sa duree - zoomer retablit l'echelle exacte,
+                    et la vraie periode est dans l'infobulle. #}
+                 style="left: calc(var(--day) * {{ r.offset_days }}); width: calc(var(--day) * {{ r.length_days }}); min-width: 14rem"
+                 title="{{ r.forecast.category }} · {{ r.forecast.period_start.strftime('%d/%m/%Y') }} – {{ r.forecast.period_end.strftime('%d/%m/%Y') }}">
+                <div class="flex items-baseline justify-between gap-3 whitespace-nowrap">
+                  <span class="font-semibold text-slate-900">{{ r.forecast.category }}</span>
+                  <span class="text-sm {{ 'text-rose-700' if r.over else 'text-emerald-700' }}">
+                    {{ "%.0f"|format(r.actual) }} € / {{ "%.0f"|format(r.planned) }} €
+                  </span>
+                </div>
+                <div class="mt-2 h-1.5 rounded-full bg-white/70">
+                  <div class="h-1.5 rounded-full {{ 'bg-rose-500' if r.over else 'bg-emerald-500' }}"
+                       style="width: {{ r.fill_pct }}%"></div>
+                </div>
+              </a>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <p class="text-sm text-slate-500 py-8">
+        Crée ta première prévision pour comparer ton budget à tes dépenses réelles.
+      </p>
+      {% endif %}
+
+      <div class="mt-6">
+        <a href="/forecasts/new"
+           class="inline-flex items-center gap-2 bg-slate-900 text-white rounded-xl px-5 py-3 font-semibold hover:bg-slate-800">
+          {{ icons.plus(4) }} Nouvelle prévision
+        </a>
+      </div>
+    </div>
+
+    <aside class="col-span-1 border-l pl-6">
+      <p class="text-xs tracking-widest text-slate-400 font-medium">TOTAL PRÉVU</p>
+      <p class="text-3xl font-bold mt-1">{{ "{:,.0f}".format(total_planned).replace(",", " ") }} €</p>
+
+      <p class="text-xs tracking-widest text-slate-400 font-medium mt-6">RÉEL À CE JOUR</p>
+      <p class="text-3xl font-bold mt-1 {{ 'text-rose-600' if total_actual > total_planned else 'text-emerald-600' }}">
+        {{ "{:,.0f}".format(total_actual).replace(",", " ") }} €
+      </p>
+
+      {% if overlaps or over_budget %}
+      <div class="mt-6 pt-6 border-t text-sm space-y-3">
+        {% for o in overlaps %}
+        <p class="text-slate-500">
+          2 prévisions se chevauchent à partir {{ o.since }} sur
+          <span class="font-semibold text-slate-700">{{ o.category }}</span>.
+        </p>
+        {% endfor %}
+        {% if over_budget %}
+        <p class="text-rose-700 font-semibold">
+          {{ over_budget|length }} dépassement{{ "s" if over_budget|length > 1 else "" }} :
+          {% for o in over_budget %}{{ o.category }} (+{{ "%.0f"|format(o.excess) }} €){{ ", " if not loop.last else "" }}{% endfor %}
+        </p>
+        {% endif %}
+      </div>
+      {% endif %}
+    </aside>
+  </div>
+</div>
+
+{% if rows %}
+<script>
+  (function () {
+    var SPAN_DAYS = {{ span_days }};
+    var TODAY_OFFSET = {{ today_offset if today_offset is not none else -1 }};
+    var MIN_DAY = 0.6, MAX_DAY = 40;   // px par jour
+    var STORAGE = 'forecast-zoom';
+
+    var scroller = document.getElementById('tl-scroll');
+    var track = document.getElementById('tl-track');
+    var dayWidth = null;
+
+    function fitWidth() {
+      return Math.max(scroller.clientWidth / SPAN_DAYS, MIN_DAY);
+    }
+    function apply() {
+      track.style.setProperty('--day', dayWidth + 'px');
+    }
+    function centerOn(dayIndex) {
+      scroller.scrollLeft = dayIndex * dayWidth - scroller.clientWidth / 2;
+    }
+    // Le zoom garde au centre la date qui y etait deja, sinon on perd de vue
+    // l'endroit qu'on etait en train de regarder.
+    function setZoom(next) {
+      var centerDay = (scroller.scrollLeft + scroller.clientWidth / 2) / dayWidth;
+      dayWidth = Math.min(Math.max(next, MIN_DAY), MAX_DAY);
+      apply();
+      centerOn(centerDay);
+      try { localStorage.setItem(STORAGE, String(dayWidth)); } catch (e) {}
+    }
+
+    var saved = null;
+    try { saved = parseFloat(localStorage.getItem(STORAGE)); } catch (e) {}
+    dayWidth = (saved && saved > 0) ? Math.min(Math.max(saved, MIN_DAY), MAX_DAY) : fitWidth();
+    apply();
+    if (saved && TODAY_OFFSET >= 0) { centerOn(TODAY_OFFSET); }
+
+    document.getElementById('zoom-in').addEventListener('click', function () { setZoom(dayWidth * 1.5); });
+    document.getElementById('zoom-out').addEventListener('click', function () { setZoom(dayWidth / 1.5); });
+    document.getElementById('zoom-fit').addEventListener('click', function () {
+      dayWidth = fitWidth(); apply(); scroller.scrollLeft = 0;
+      try { localStorage.removeItem(STORAGE); } catch (e) {}
+    });
+    document.getElementById('go-today').addEventListener('click', function () {
+      if (TODAY_OFFSET >= 0) { centerOn(TODAY_OFFSET); }
+    });
+
+    // Glisser-deposer pour faire defiler. Un petit deplacement ne doit pas
+    // declencher le clic qui ouvrirait la prevision.
+    var down = false, startX = 0, startScroll = 0, moved = 0;
+    scroller.addEventListener('mousedown', function (e) {
+      down = true; moved = 0;
+      startX = e.pageX; startScroll = scroller.scrollLeft;
+      scroller.classList.add('cursor-grabbing');
+    });
+    window.addEventListener('mousemove', function (e) {
+      if (!down) { return; }
+      var delta = e.pageX - startX;
+      moved = Math.max(moved, Math.abs(delta));
+      scroller.scrollLeft = startScroll - delta;
+      if (moved > 4) { e.preventDefault(); }
+    });
+    window.addEventListener('mouseup', function () {
+      down = false;
+      scroller.classList.remove('cursor-grabbing');
+    });
+    scroller.addEventListener('click', function (e) {
+      if (moved > 4) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+
+    // Molette horizontale / trackpad: defilement natif. Ctrl+molette: zoom.
+    scroller.addEventListener('wheel', function (e) {
+      if (!e.ctrlKey) { return; }
+      e.preventDefault();
+      setZoom(dayWidth * (e.deltaY < 0 ? 1.15 : 1 / 1.15));
+    }, { passive: false });
+
+    window.addEventListener('resize', function () {
+      if (!saved) { dayWidth = fitWidth(); apply(); }
+    });
+  })();
+</script>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}Suivi de dépenses{% endblock %}
+{% block content %}
+
+{% if unreviewed_statements %}
+<div class="card border-amber-400 bg-amber-50 mb-4">
+  <p class="font-semibold text-amber-800">Relevés à vérifier ({{ unreviewed_statements|length }})</p>
+  <p class="text-sm text-amber-700">
+    Le solde recalculé ne correspond pas au solde affiché sur le relevé — voir la page
+    <a href="/statements" class="underline">Relevés</a>.
+  </p>
+</div>
+{% endif %}
+
+<form method="get" action="/" class="card mb-4 flex flex-wrap gap-3 items-end">
+  <div>
+    <label class="block text-xs text-slate-500">Période</label>
+    <select name="period_type" class="border rounded px-2 py-1" onchange="this.form.submit()">
+      <option value="month" {{ "selected" if period_type == "month" else "" }}>Mois</option>
+      <option value="year" {{ "selected" if period_type == "year" else "" }}>Année</option>
+      <option value="custom" {{ "selected" if period_type == "custom" else "" }}>Personnalisé</option>
+    </select>
+  </div>
+
+  {% if period_type == "year" %}
+  <div>
+    <label class="block text-xs text-slate-500">Année</label>
+    <input type="number" name="year" value="{{ year }}" class="border rounded px-2 py-1 w-24" />
+  </div>
+  {% elif period_type == "custom" %}
+  <div>
+    <label class="block text-xs text-slate-500">Du</label>
+    <input type="date" name="start" value="{{ start }}" class="border rounded px-2 py-1" />
+  </div>
+  <div>
+    <label class="block text-xs text-slate-500">Au</label>
+    <input type="date" name="end" value="{{ end }}" class="border rounded px-2 py-1" />
+  </div>
+  {% else %}
+  <div>
+    <label class="block text-xs text-slate-500">Mois</label>
+    <input type="month" name="month" value="{{ month }}" class="border rounded px-2 py-1" />
+  </div>
+  {% endif %}
+
+  <button class="bg-slate-900 text-white rounded px-3 py-1">Filtrer</button>
+</form>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+  <div class="card">
+    <p class="text-sm text-slate-500">Revenus — {{ period_label }} (hors virements internes)</p>
+    <p class="text-2xl font-semibold text-emerald-600">{{ "%.2f"|format(income_total) }} €</p>
+  </div>
+  <div class="card">
+    <p class="text-sm text-slate-500">Dépenses — {{ period_label }} (hors virements internes)</p>
+    <p class="text-2xl font-semibold text-rose-600">{{ "%.2f"|format(expense_total) }} €</p>
+  </div>
+</div>
+
+<div class="card mb-6">
+  <h2 class="font-semibold mb-3">Prévisions vs réel — {{ period_label }}</h2>
+  {% if comparison_rows %}
+  <table class="data w-full text-sm">
+    <thead>
+      <tr><th>Catégorie</th><th>Prévu</th><th>Réel</th><th>Écart</th></tr>
+    </thead>
+    <tbody>
+      {% for row in comparison_rows %}
+      <tr>
+        <td>{{ row.category }}</td>
+        <td>{{ "%.2f"|format(row.planned) }} €</td>
+        <td>{{ "%.2f"|format(row.actual) }} €</td>
+        <td class="{{ 'text-emerald-600' if row.diff >= 0 else 'text-rose-600' }}">
+          {{ "%.2f"|format(row.diff) }} €
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-slate-500 text-sm">Aucune dépense ni prévision pour cette période.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2 class="font-semibold mb-3">Soldes des comptes</h2>
+  <table class="data w-full text-sm">
+    <thead>
+      <tr><th>Compte</th><th>Banque</th><th>Solde (dernier relevé)</th><th>Au</th></tr>
+    </thead>
+    <tbody>
+      {% for row in account_balances %}
+      <tr>
+        <td>{{ row.account.name }}</td>
+        <td>{{ row.account.bank }}</td>
+        <td>{{ "%.2f"|format(row.balance) + " €" if row.balance is not none else "—" }}</td>
+        <td>
+          {{ row.as_of if row.as_of else "—" }}
+          {% if row.needs_review %}<span class="text-amber-600 text-xs">(à vérifier)</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
