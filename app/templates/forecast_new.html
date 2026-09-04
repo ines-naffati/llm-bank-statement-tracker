@@ -37,11 +37,15 @@
       <input type="hidden" name="end" id="field-end" value="{{ end }}" />
     </div>
 
-    <div class="mt-6 flex gap-3 items-center">
-      <button id="submit-btn" class="bg-slate-900 text-white rounded-xl px-5 py-2.5 font-semibold">
-        Enregistrer
-      </button>
-      <a href="/forecasts" class="text-sm text-slate-500 underline">Annuler</a>
+    {# Aucun bouton d'enregistrement: la prevision est ecrite des qu'elle est
+       complete, puis a chaque modification. Ce bandeau est donc le seul moyen
+       de savoir ou en est la sauvegarde — il ne doit jamais rester vide. #}
+    <div class="mt-6 border-t pt-4">
+      <p id="save-state" class="text-sm" role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="mt-4 flex gap-3 items-center">
+      <a href="/forecasts" class="text-sm text-slate-600 underline">Retour aux prévisions</a>
       {% if forecast_id %}
       <button type="submit" form="delete-form" class="text-sm text-rose-600 underline ml-auto">
         Supprimer
@@ -88,7 +92,55 @@
     var label = document.getElementById('range-label');
     var fieldStart = document.getElementById('field-start');
     var fieldEnd = document.getElementById('field-end');
-    var submitBtn = document.getElementById('submit-btn');
+    var saveState = document.getElementById('save-state');
+    var form = document.querySelector('form[action="/forecasts"]');
+    var fieldId = form.querySelector('input[name="forecast_id"]');
+    var categoryField = form.querySelector('select[name="category"]');
+    var amountField = form.querySelector('input[name="amount_planned"]');
+
+    var saveTimer = null;
+
+    function isComplete() {
+      return !!(start && end && parseFloat(amountField.value) > 0);
+    }
+
+    function setState(text, tone) {
+      saveState.textContent = text;
+      saveState.className = 'text-sm ' + (tone || 'text-slate-500');
+    }
+
+    /* On attend une pause de saisie avant d'ecrire: sans ce delai, taper "150"
+       enregistrerait successivement 1, 15 puis 150. */
+    function scheduleSave() {
+      window.clearTimeout(saveTimer);
+      if (!isComplete()) {
+        setState(
+          start && end
+            ? 'Indique un montant pour enregistrer.'
+            : 'Choisis un jour de début et un jour de fin pour enregistrer.',
+          'text-slate-400'
+        );
+        return;
+      }
+      setState('Modification en attente…', 'text-slate-400');
+      saveTimer = window.setTimeout(save, 700);
+    }
+
+    function save() {
+      setState('Enregistrement…', 'text-slate-500');
+      window.autosave.submit(form, {
+        url: '/forecasts/save',
+        onSuccess: function (body) {
+          // Le serveur renvoie l'identifiant cree: les modifications suivantes
+          // mettent a jour CETTE prevision au lieu d'en creer une par frappe.
+          fieldId.value = body.id;
+          setState('Enregistré à ' + body.saved_at, 'text-emerald-700');
+        },
+        onError: function (message) {
+          setState(message || 'Enregistrement impossible.', 'text-rose-700 font-medium');
+        }
+      });
+    }
 
     function iso(y, m, d) {
       return y + '-' + String(m).padStart(2, '0') + '-' + String(d).padStart(2, '0');
@@ -107,6 +159,7 @@
         end = value;
       }
       render();
+      scheduleSave();
     }
 
     function render() {
@@ -124,11 +177,6 @@
         label.textContent = 'Aucun jour sélectionné';
         label.className = 'text-sm font-semibold text-slate-400';
       }
-      submitBtn.disabled = !(start && end);
-      submitBtn.className = (start && end)
-        ? 'bg-slate-900 text-white rounded-xl px-5 py-2.5 font-semibold hover:bg-slate-800'
-        : 'bg-slate-300 text-white rounded-xl px-5 py-2.5 font-semibold cursor-not-allowed';
-
       var html = '<div class="grid grid-cols-7 gap-y-1 text-center">';
       DAYS.forEach(function (d) {
         html += '<div class="text-xs font-medium text-slate-400 pb-2">' + d + '</div>';
@@ -178,7 +226,29 @@
       month++; if (month > 12) { month = 1; year++; } render();
     });
 
+    categoryField.addEventListener('change', scheduleSave);
+    amountField.addEventListener('input', scheduleSave);
+
+    // Sans JavaScript, la soumission classique du formulaire reste valable;
+    // avec, la touche Entree ne doit pas doubler l'enregistrement automatique.
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      window.clearTimeout(saveTimer);
+      if (isComplete()) { save(); }
+    });
+
     render();
+    // Etat initial: on affiche ce qu'il manque, sans rien enregistrer — ouvrir
+    // une prevision existante ne doit pas la reecrire.
+    if (isComplete()) {
+      setState(
+        {{ "'Prévision enregistrée. Toute modification est sauvegardée automatiquement.'"
+           if forecast_id else "'Prêt à enregistrer.'" }},
+        'text-slate-500'
+      );
+    } else {
+      scheduleSave();
+    }
   })();
 </script>
 

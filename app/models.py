@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
@@ -22,7 +22,7 @@ class Account(SQLModel, table=True):
     bank: str
     account_type: str = "courant"
     external_ref: Optional[str] = Field(default=None, index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class Statement(SQLModel, table=True):
@@ -37,7 +37,7 @@ class Statement(SQLModel, table=True):
     closing_balance: Optional[float] = None
     reconciliation_ok: Optional[bool] = None
     reconciliation_diff: Optional[float] = None
-    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    uploaded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class Transaction(SQLModel, table=True):

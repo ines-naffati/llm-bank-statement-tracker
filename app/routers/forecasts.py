@@ -1,9 +1,9 @@
 import calendar
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
@@ -180,6 +180,88 @@ def new_forecast(
     )
 
 
+def _validate_and_save(
+    session: Session,
+    forecast_id: str,
+    category: str,
+    start: str,
+    end: str,
+    amount_planned: float,
+):
+    """Valide puis enregistre une prevision. Renvoie (prevision, erreur).
+
+    Unique chemin d'ecriture, partage par l'enregistrement automatique (JSON) et
+    par la soumission classique du formulaire: la regle de non-chevauchement ne
+    peut donc pas etre respectee d'un cote et oubliee de l'autre."""
+    # forecast_id vient d'un champ cache: vide en creation, d'ou le str puis la
+    # conversion manuelle (meme motif que les <select> "Tous").
+    fid = int(forecast_id) if forecast_id else None
+
+    try:
+        period_start = date.fromisoformat(start)
+        period_end = date.fromisoformat(end)
+    except ValueError:
+        return None, "Choisis un jour de d\u00e9but puis un jour de fin dans le calendrier."
+
+    if period_start > period_end:
+        return None, "La date de fin doit venir apr\u00e8s la date de d\u00e9but."
+    if amount_planned <= 0:
+        return None, "Le montant pr\u00e9vu doit \u00eatre sup\u00e9rieur \u00e0 0."
+
+    # Regle metier: pas deux previsions d'une meme categorie sur des periodes
+    # qui se recouvrent, sinon une depense tomberait dans les deux.
+    conflicts = find_overlaps(session, category, period_start, period_end, exclude_id=fid)
+    if conflicts:
+        c = conflicts[0]
+        return None, (
+            f"Cette p\u00e9riode chevauche une pr\u00e9vision {category} existante "
+            f"({c.period_start.strftime('%d/%m/%Y')} \u2013 {c.period_end.strftime('%d/%m/%Y')}, "
+            f"{c.amount_planned:.2f} \u20ac). Deux pr\u00e9visions d'une m\u00eame cat\u00e9gorie ne peuvent pas "
+            "se chevaucher : raccourcis l'une des deux, ou modifie celle qui existe d\u00e9j\u00e0."
+        )
+
+    forecast = session.get(Forecast, fid) if fid else None
+    if forecast is None:
+        forecast = Forecast(
+            category=category,
+            period_start=period_start,
+            period_end=period_end,
+            amount_planned=amount_planned,
+        )
+    else:
+        forecast.category = category
+        forecast.period_start = period_start
+        forecast.period_end = period_end
+        forecast.amount_planned = amount_planned
+    session.add(forecast)
+    session.commit()
+    session.refresh(forecast)
+    return forecast, None
+
+
+@router.post("/save")
+def autosave_forecast(
+    category: str = Form(...),
+    start: str = Form(""),
+    end: str = Form(""),
+    amount_planned: float = Form(...),
+    forecast_id: str = Form(""),
+    session: Session = Depends(get_session),
+):
+    """Enregistrement automatique: le formulaire n'a plus de bouton, chaque
+    modification arrive ici des qu'elle est complete. Renvoie l'identifiant pour
+    que les modifications suivantes mettent a jour la meme prevision au lieu
+    d'en creer une nouvelle a chaque frappe."""
+    forecast, error = _validate_and_save(
+        session, forecast_id, category, start, end, amount_planned
+    )
+    if error:
+        return JSONResponse({"ok": False, "error": error}, status_code=422)
+    return JSONResponse(
+        {"ok": True, "id": forecast.id, "saved_at": datetime.now().strftime("%H:%M:%S")}
+    )
+
+
 @router.post("")
 def save_forecast(
     request: Request,
@@ -190,56 +272,14 @@ def save_forecast(
     forecast_id: str = Form(""),
     session: Session = Depends(get_session),
 ):
-    # forecast_id vient d'un champ cache: vide en creation, d'ou le str puis la
-    # conversion manuelle (meme motif que les <select> "Tous").
-    fid = int(forecast_id) if forecast_id else None
-
-    error = None
-    period_start = period_end = None
-    try:
-        period_start = date.fromisoformat(start)
-        period_end = date.fromisoformat(end)
-        if period_start > period_end:
-            error = "La date de fin doit venir apr\u00e8s la date de d\u00e9but."
-    except ValueError:
-        error = "Choisis un jour de d\u00e9but puis un jour de fin dans le calendrier."
-
-    if not error and amount_planned <= 0:
-        error = "Le montant pr\u00e9vu doit \u00eatre sup\u00e9rieur \u00e0 0."
-
-    if not error:
-        # Regle metier: pas deux previsions d'une meme categorie sur des periodes
-        # qui se recouvrent, sinon une depense tomberait dans les deux.
-        conflicts = find_overlaps(session, category, period_start, period_end, exclude_id=fid)
-        if conflicts:
-            c = conflicts[0]
-            error = (
-                f"Cette p\u00e9riode chevauche une pr\u00e9vision {category} existante "
-                f"({c.period_start.strftime('%d/%m/%Y')} \u2013 {c.period_end.strftime('%d/%m/%Y')}, "
-                f"{c.amount_planned:.2f} \u20ac). Deux pr\u00e9visions d'une m\u00eame cat\u00e9gorie ne peuvent pas "
-                "se chevaucher : raccourcis l'une des deux, ou modifie celle qui existe d\u00e9j\u00e0."
-            )
-
+    """Soumission classique du formulaire (touche Entree, ou navigateur sans
+    JavaScript). L'enregistrement automatique passe par /forecasts/save."""
+    forecast, error = _validate_and_save(
+        session, forecast_id, category, start, end, amount_planned
+    )
     if error:
+        fid = int(forecast_id) if forecast_id else None
         return _form_page(request, session, error, fid, category, start, end, amount_planned)
-
-    existing = session.get(Forecast, fid) if fid else None
-    if existing:
-        existing.category = category
-        existing.period_start = period_start
-        existing.period_end = period_end
-        existing.amount_planned = amount_planned
-        session.add(existing)
-    else:
-        session.add(
-            Forecast(
-                category=category,
-                period_start=period_start,
-                period_end=period_end,
-                amount_planned=amount_planned,
-            )
-        )
-    session.commit()
     return RedirectResponse(url="/forecasts", status_code=303)
 
 

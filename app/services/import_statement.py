@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.models import Account, Statement, Transaction
 from app.parsers.pdf_extract import extract_text
+from app.services.backup import snapshot
 from app.services.categorize import resolve_category
 from app.services.reconciliation import reconcile
 
@@ -48,8 +49,10 @@ def find_or_create_account(session: Session, bank: str, label: str, number: str)
     if not account:
         account = Account(name=label, bank=bank, external_ref=number or None)
         session.add(account)
-        session.commit()
-        session.refresh(account)
+        # `flush` et non `commit`: l'identifiant est attribue tout de suite, mais
+        # rien n'est definitif tant que l'appelant n'a pas valide. Un import qui
+        # echoue a mi-parcours ne laisse donc pas de compte orphelin derriere lui.
+        session.flush()
     return account
 
 
@@ -65,9 +68,36 @@ def import_pdf(session: Session, file_path: str, original_filename: str) -> list
         return [{"already_imported": True, "filename": original_filename}]
 
     raw_text = extract_text(file_path)
-    result = extract_statement(raw_text)
+    result = extract_statement(raw_text)  # appel au modele, avant toute ecriture
     stored_filename = Path(file_path).name
 
+    # Un import est la seule operation qui ajoute des dizaines de lignes d'un
+    # coup, et la seule dont le contenu depend d'un modele qui peut se tromper.
+    # On fige donc l'etat d'avant pour pouvoir y revenir entierement.
+    snapshot("avant-import")
+
+    # Tout l'import tient dans UNE seule transaction de base de donnees: soit le
+    # releve entier entre, soit rien. Avant, le releve etait valide avant ses
+    # lignes, et une erreur a mi-parcours laissait un releve vide en base -
+    # impossible a distinguer d'un releve legitimement sans operation.
+    try:
+        summaries = _import_sections(
+            session, result, file_hash, original_filename, stored_filename
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    return summaries
+
+
+def _import_sections(
+    session: Session,
+    result: dict,
+    file_hash: str,
+    original_filename: str,
+    stored_filename: str,
+) -> list[dict]:
     summaries = []
     for section in result.get("accounts", []):
         account = find_or_create_account(
@@ -106,8 +136,7 @@ def import_pdf(session: Session, file_path: str, original_filename: str) -> list
             reconciliation_diff=diff,
         )
         session.add(statement)
-        session.commit()
-        session.refresh(statement)
+        session.flush()  # attribue l'identifiant sans rien rendre definitif
 
         inserted, skipped_dupes = 0, 0
         for t in transactions:
@@ -143,7 +172,7 @@ def import_pdf(session: Session, file_path: str, original_filename: str) -> list
                 )
             )
             inserted += 1
-        session.commit()
+        session.flush()
 
         summaries.append(
             {

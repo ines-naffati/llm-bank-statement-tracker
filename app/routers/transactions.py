@@ -1,14 +1,14 @@
-from collections import defaultdict
+from datetime import datetime
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select
 
 from app.db import get_session
-from app.models import CATEGORIES, Account, Forecast, Statement, Transaction
+from app.models import CATEGORIES, Account, Statement, Transaction
 from app.services.allocations import (
     allocated_per_expense,
     allocated_per_refund,
@@ -83,7 +83,6 @@ def home(
     # depense de juin remboursee en juillet affiche donc son montant net meme quand
     # on ne regarde que juin. Le montant effectif d'une transaction ne depend jamais
     # de la fenetre consultee.
-    alloc_expense = allocated_per_expense(session)
     alloc_refund = allocated_per_refund(session)
 
     # Depenses par categorie: on passe par le service des previsions, qui est aussi
@@ -223,24 +222,57 @@ def _back_to_list(query: str) -> str:
     return f"/transactions?{query}" if query else "/transactions"
 
 
+def _update_result(wants_json: bool, back_query: str, error: Optional[str] = None):
+    """Reponse d'un enregistrement automatique: du JSON quand la page l'a demande
+    en arriere-plan (elle affiche alors elle-meme le statut), une redirection
+    classique sinon."""
+    if wants_json:
+        if error:
+            return JSONResponse({"ok": False, "error": error}, status_code=422)
+        return JSONResponse({"ok": True, "saved_at": datetime.now().strftime("%H:%M:%S")})
+    return RedirectResponse(url=_back_to_list(back_query), status_code=303)
+
+
 @router.post("/transactions/{transaction_id}/update")
 def update_transaction(
+    request: Request,
     transaction_id: int,
     category: str = Form(...),
     is_internal_transfer: bool = Form(False),
     back_query: str = Form(""),
     session: Session = Depends(get_session),
 ):
+    wants_json = request.headers.get("x-requested-with") == "fetch"
+
     tx = session.get(Transaction, transaction_id)
-    if tx:
-        tx.category = category
-        tx.is_internal_transfer = is_internal_transfer
-        tx.is_manual_override = True
-        session.add(tx)
-        session.commit()
-        if tx.merchant_normalized:
-            learn_category(session, tx.merchant_normalized, category)
-    return RedirectResponse(url=_back_to_list(back_query), status_code=303)
+    if not tx:
+        return _update_result(wants_json, back_query, error="Transaction introuvable.")
+
+    if is_internal_transfer and not tx.is_internal_transfer:
+        # Un virement interne est exclu des totaux. S'il participait a une
+        # repartition, le montant disparaitrait des revenus sans disparaitre des
+        # depenses: l'egalite (revenus - depenses) que garantit `allocations.py`
+        # serait rompue. On refuse plutot que de casser les comptes en silence.
+        engage = allocations_of_refund(session, tx.id) + allocations_on_expense(session, tx.id)
+        if engage:
+            return _update_result(
+                wants_json,
+                back_query,
+                error=(
+                    "Cette transaction participe à une répartition de remboursement. "
+                    "La marquer comme virement interne fausserait les totaux : "
+                    "supprime d'abord la répartition."
+                ),
+            )
+
+    tx.category = category
+    tx.is_internal_transfer = is_internal_transfer
+    tx.is_manual_override = True
+    session.add(tx)
+    session.commit()
+    if tx.merchant_normalized:
+        learn_category(session, tx.merchant_normalized, category)
+    return _update_result(wants_json, back_query)
 
 
 

@@ -130,11 +130,13 @@
           {%- endif -%}
         </td>
         <td>
-          {# Plus de bouton de validation: le changement est enregistre des qu'il est
-             fait, comme les filtres de colonnes. #}
-          <form id="tx-form-{{ t.id }}" method="post" action="/transactions/{{ t.id }}/update">
+          {# Aucun bouton de validation: le changement part au serveur des qu'il est
+             fait, sans recharger la page — on ne perd donc plus sa position dans
+             la liste a chaque recategorisation. #}
+          <form id="tx-form-{{ t.id }}" method="post" action="/transactions/{{ t.id }}/update"
+                data-autosave>
             <input type="hidden" name="back_query" value="{{ current_query }}" />
-            <select name="category" onchange="this.form.submit()"
+            <select name="category"
                     class="border rounded px-1 py-0.5 text-xs {{ 'text-slate-400' if settled else '' }}">
               {% for c in categories %}
               <option value="{{ c }}" {{ "selected" if t.category == c else "" }}>{{ c }}</option>
@@ -144,12 +146,13 @@
         </td>
         <td>
           <input type="checkbox" form="tx-form-{{ t.id }}" name="is_internal_transfer" value="true"
-                 onchange="this.form.submit()" {{ "checked" if t.is_internal_transfer else "" }} />
+                 {{ "checked" if t.is_internal_transfer else "" }} />
         </td>
         <td>
-          {% if t.direction == "credit" and not t.is_internal_transfer %}
+          {% if t.direction == "credit" %}
           <a href="/transactions/{{ t.id }}/allocate?back_query={{ current_query|urlencode }}"
-             class="text-xs text-sky-700 underline">{{ "Modifier" if covered else "Répartir" }}</a>
+             data-allocate-link
+             class="text-xs text-sky-700 underline {{ 'hidden' if t.is_internal_transfer else '' }}">{{ "Modifier" if covered else "Répartir" }}</a>
           {% endif %}
         </td>
       </tr>
@@ -157,5 +160,75 @@
     </tbody>
   </table>
 </div>
+
+<script>
+  /* Chaque ligne s'enregistre seule. Si le serveur refuse (ex: marquer comme
+     virement interne une transaction deja engagee dans une repartition), on
+     remet le controle dans son etat precedent: l'ecran ne doit jamais montrer
+     une valeur qui n'est pas en base. */
+  (function () {
+    document.querySelectorAll("form[data-autosave]").forEach(function (form) {
+      var row = form.closest("tr");
+      var controls = Array.prototype.slice.call(form.elements).concat(
+        Array.prototype.slice.call(
+          document.querySelectorAll('[form="' + form.id + '"]')
+        )
+      );
+
+      function remember() {
+        controls.forEach(function (control) {
+          if (control.type === "checkbox") {
+            control.dataset.previous = control.checked ? "1" : "";
+          } else if (control.tagName === "SELECT") {
+            control.dataset.previous = control.value;
+          }
+        });
+      }
+
+      function rollback() {
+        controls.forEach(function (control) {
+          if (control.type === "checkbox") {
+            control.checked = control.dataset.previous === "1";
+          } else if (control.tagName === "SELECT" && control.dataset.previous !== undefined) {
+            control.value = control.dataset.previous;
+          }
+        });
+        syncAllocateLink();
+      }
+
+      /* Une transaction marquee interne sort des totaux: le lien de repartition
+         n'a plus de sens et doit disparaitre sans attendre un rechargement. */
+      function syncAllocateLink() {
+        var link = row && row.querySelector("[data-allocate-link]");
+        var internal = row && row.querySelector('input[type="checkbox"]');
+        if (link && internal) {
+          link.classList.toggle("hidden", internal.checked);
+        }
+      }
+
+      remember();
+      controls.forEach(function (control) {
+        if (control.type !== "checkbox" && control.tagName !== "SELECT") {
+          return;
+        }
+        control.addEventListener("change", function () {
+          syncAllocateLink();
+          window.autosave.submit(form, {
+            onSuccess: function () {
+              remember();
+              if (row) {
+                row.classList.add("bg-emerald-50");
+                window.setTimeout(function () {
+                  row.classList.remove("bg-emerald-50");
+                }, 900);
+              }
+            },
+            onError: rollback,
+          });
+        });
+      });
+    });
+  })();
+</script>
 
 {% endblock %}
