@@ -100,3 +100,22 @@ def test_les_jetons_chiffres_echappent_a_la_liste_generique(tmp_path, monkeypatc
 def test_base_absente_ne_fait_pas_echouer(tmp_path, monkeypatch):
     monkeypatch.setattr(garde, "DB_PATH", tmp_path / "inexistante.db")
     assert garde.needles_from_database() == set()
+
+
+def test_image_binaire_signalee_sans_fausse_alerte(tmp_path, monkeypatch):
+    """Une capture d'ecran ne doit ni faire planter le controle, ni declencher
+    une fausse alerte sur ses octets: elle est listee pour verification visuelle."""
+    import subprocess
+
+    repo = tmp_path / "depot"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / "capture.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"2" * 30 + b"\x00" * 10)
+    (repo / "notes.txt").write_text("rien de sensible\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(garde, "needles_from_database", lambda: set())
+
+    assert garde.is_binary("capture.jpg", "index")
+    assert not garde.is_binary("notes.txt", "index")
+    assert garde.main() == 0

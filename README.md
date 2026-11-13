@@ -1,89 +1,84 @@
-# Suivi de dépenses
+# LLM bank-statement tracker
 
-Application locale pour importer des relevés bancaires PDF (Crédit Mutuel, Boursorama...),
-en extraire les transactions via une IA (API Claude ou Ollama en local), et comparer dépenses
-réelles et prévisions.
+**A local web app that turns raw PDF bank statements into a categorized ledger with a large language model, checks every extraction against the printed balances, and compares actual spending with the budget.**
 
-## Installation
+*[Version française](README.fr.md) · the user interface is in French.*
+
+![Dashboard: forecast vs. actual by category](docs/screenshots/dashboard.jpg)
+
+*All screenshots use a fictional demo database (`scripts/seed_demo.py`).*
+
+## Why
+
+French bank statements are PDFs with irregular layouts. Some transactions span several lines, debit and credit columns are only separated by position, and one document can contain several accounts (checking plus savings). Rule-based parsers break with every new layout. This app treats extraction as a **structured-output problem for an LLM**, then **verifies the output with accounting arithmetic** before anything reaches the database.
+
+## How it works
+
+```
+PDF ──► pdfplumber (text + raw column table)
+          │
+          ▼
+     LLM extraction ── JSON schema (tool use / structured output)
+     Claude API  or  Ollama (local, free)
+          │
+          ▼
+     Validation ── balance reconciliation: opening + credits − debits = closing?
+          │          malformed-output recovery, retries
+          ▼
+     SQLite (one atomic transaction per statement) ──► dashboard, budgets, refunds
+```
+
+| Concern | What the app does |
+|---|---|
+| **Structured extraction** | One JSON schema serves as the Anthropic tool definition and as the Ollama `format` constraint. The model must return accounts, balances and typed transactions (date, amount, direction, merchant, category, internal-transfer flag). |
+| **Grounding against hallucination** | The prompt forbids inferring debit or credit from wording. It points the model to the raw column table extracted from the PDF instead. |
+| **Automatic verification** | Every imported statement is **reconciled**: the computed closing balance must match the printed one to within €0.01. A mismatch flags the statement for review (see the screenshots). It catches dropped transactions and swapped debit/credit, the typical failures of small models. |
+| **Robustness** | Recovers responses where the model nests JSON inside a string. Retries non-deterministic failures. Re-importing a statement is idempotent, thanks to file hashes and deduplication keys. |
+| **Learning from corrections** | When the user changes a category, the app remembers it for that merchant, and the correction overrides the LLM's guess on later imports. |
+| **Data safety** | Each import runs as one atomic database transaction. Automatic SQLite backups are taken before imports and after edits. A pre-push check (`scripts/check_no_personal_data.py`) scans committed files for identifiers taken from the local database, plus IBANs and API keys. |
+
+## Features
+
+- Drag-and-drop PDF import. Accounts and sub-accounts are detected from the document.
+- Transactions table with inline editing that saves automatically (there is no "Save" button) and an *internal transfer* flag.
+- Refund allocation: a credit, such as a friend repaying their share of a dinner, can be assigned to one or more expenses. Budgets then use the net amount.
+- Budgets by category over any period, prorated to the days viewed, shown as a timeline with overruns.
+
+| Statements and reconciliation status | Budget timeline |
+|---|---|
+| ![Statements](docs/screenshots/statements.jpg) | ![Forecasts](docs/screenshots/forecasts.jpg) |
+
+## Quickstart
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env            # choose EXTRACTION_BACKEND=claude (API key) or ollama (local)
+
+# Try it with fictional data, without importing any real statement:
+SUIVI_DATA_DIR=demo_data python -m scripts.seed_demo
+SUIVI_DATA_DIR=demo_data uvicorn app.main:app      # http://127.0.0.1:8000
+
+python -m pytest -q                                 # 41 tests
 ```
 
-Puis dans `.env`, choisir le moteur d'extraction avec `EXTRACTION_BACKEND` :
+## Choice of backend
 
-- **`claude`** (par défaut) — nécessite une clé `ANTHROPIC_API_KEY` (console.anthropic.com), payant
-  à l'usage (~1€/an pour 2 comptes importés mensuellement), le plus fiable.
-- **`ollama`** — gratuit et 100% local, nécessite [Ollama](https://ollama.com) installé et lancé
-  (`ollama serve`), avec un modèle téléchargé (`ollama pull llama3.2:3b`, déjà présent sur cette
-  machine, ou `ollama pull qwen2.5:7b` pour une extraction plus fiable si besoin — ~4,7 Go). Moins
-  précis que Claude, notamment sur la catégorisation et la détection des virements internes — la
-  vérification automatique du solde à l'import sert de garde-fou pour repérer les erreurs
-  d'extraction.
+| Backend | Cost | Privacy | Notes |
+|---|---|---|---|
+| Claude (`claude`) | ≈ €1 per year for two monthly statements | Extracted text is sent to the API | Most reliable on multi-line transactions and internal-transfer detection |
+| Ollama (`ollama`, e.g. `llama3.2:3b`) | Free | Nothing leaves the machine | Less accurate; the reconciliation check flags its errors |
 
-## Lancement
+## Stack
 
-```bash
-source .venv/bin/activate
-uvicorn app.main:app --reload
-```
+Python · FastAPI · SQLModel / SQLite (WAL) · Jinja2 · pdfplumber · Anthropic API (tool use) · Ollama (structured outputs) · pytest
 
-Ouvrir http://127.0.0.1:8000
+## Limitations and next steps
 
-## Utilisation
+- **No quantitative extraction benchmark yet.** Next step: generate synthetic statements with known ground truth, then measure field-level accuracy and reconciliation pass rate for each backend and model.
+- The UI and prompts are in French and were tuned on two French banks.
+- The app is designed for a single local user, not for multi-user deployment.
 
-1. Aller sur **Relevés** et importer un PDF. Les comptes/sous-comptes présents dans le document
-   (compte courant, livrets...) sont détectés et créés automatiquement.
-2. Vérifier le statut de rapprochement (solde recalculé vs solde affiché) — un écart signale un
-   relevé à contrôler manuellement.
-3. Ajuster si besoin la catégorie ou le statut "virement interne" d'une transaction dans
-   **Transactions** — la catégorie est mémorisée pour ce commerçant.
-4. Saisir des prévisions par catégorie et par période dans **Prévisions**.
-5. Consulter **Suivi de dépenses** (page d'accueil) pour la comparaison prévu/réel.
+## License
 
-Il n'y a **aucun bouton « Enregistrer »** : chaque modification part au serveur dès qu'elle est
-faite, et un bandeau confirme l'enregistrement (ou explique le refus). Une saisie refusée est
-annulée à l'écran, pour que l'affichage ne montre jamais une valeur absente de la base.
-
-## Sauvegardes
-
-Les sauvegardes sont automatiques, dans `data/backups/` :
-
-- au démarrage de l'application ;
-- avant chaque import de relevé (la seule opération qui écrit en masse à partir d'un texte
-  produit par un modèle, donc faillible) ;
-- après les modifications, au plus une fois toutes les 5 minutes.
-
-Elles utilisent l'API de sauvegarde en ligne de SQLite : le fichier produit est toujours une base
-cohérente, même si l'application écrit pendant ce temps. La rétention garde les 20 plus récentes
-puis une par jour sur 60 jours.
-
-Pour restaurer (application arrêtée) :
-
-```bash
-python -m scripts.restore_backup
-```
-
-Le script affiche le contenu de chaque sauvegarde avant de demander confirmation, et met la base
-actuelle de côté au lieu de l'écraser.
-
-Ces sauvegardes vivent sur le même disque que la base : elles protègent d'une fausse manœuvre ou
-d'un import raté, **pas** d'une panne de disque. Une copie de `data/` ailleurs (Time Machine, un
-disque externe) reste nécessaire.
-
-## Tests
-
-```bash
-pip install pytest
-python -m pytest tests/ -q
-```
-
-## Confidentialité
-
-Avec `EXTRACTION_BACKEND=claude`, le texte extrait des relevés est envoyé à l'API Claude
-(Anthropic) pour être structuré en transactions — c'est la seule donnée qui quitte la machine.
-Avec `EXTRACTION_BACKEND=ollama`, rien ne quitte la machine. Dans les deux cas, la base SQLite et
-les PDF importés sont stockés dans `data/` (exclu de git).
+MIT

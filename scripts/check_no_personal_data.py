@@ -69,10 +69,32 @@ def files_to_check():
 
 def content_of(path, source):
     """Contenu tel que git le detient - dans l'index ou dans le dernier commit -
-    et non tel qu'il est sur le disque: c'est bien ce qui partirait."""
+    et non tel qu'il est sur le disque: c'est bien ce qui partirait.
+
+    `errors="replace"`: un fichier binaire (capture d'ecran, image) ne doit pas
+    faire planter le controle - un controle qui plante laisse tout passer. Le
+    texte lisible qu'il contient reste verifie."""
     revision = f":{path}" if source == "index" else f"HEAD:{path}"
-    out = subprocess.run(["git", "show", revision], capture_output=True, text=True)
-    return out.stdout if out.returncode == 0 else ""
+    out = subprocess.run(["git", "show", revision], capture_output=True)
+    return out.stdout.decode("utf-8", errors="replace") if out.returncode == 0 else ""
+
+
+def is_binary(path, source):
+    """Une image ou un PDF ne se lit pas comme du texte: y chercher des motifs
+    produit de fausses alertes (des octets d'image qui ressemblent a un numero),
+    et un controle qui crie a tort finit ignore. On les signale plutot pour une
+    verification visuelle."""
+    revision = f":{path}" if source == "index" else f"HEAD:{path}"
+    out = subprocess.run(["git", "show", revision], capture_output=True)
+    data = out.stdout[:8000]
+    if b"\x00" in data:
+        return True
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        # Une coupure au milieu d'un caractere multi-octets en fin d'extrait n'est pas du binaire.
+        return exc.start < len(data) - 4
+    return False
 
 
 def needles_from_database():
@@ -117,8 +139,12 @@ def main() -> int:
 
     needles = needles_from_database()
     problems = []
+    binaries = []
 
     for path in files:
+        if is_binary(path, source):
+            binaries.append(path)
+            continue
         content = content_of(path, source)
         if not content:
             continue
@@ -137,6 +163,11 @@ def main() -> int:
                 problems.append((path, "identifiant présent dans la base locale", needle))
 
     portee = "indexé(s)" if source == "index" else "suivi(s) par git"
+    if binaries:
+        print("Fichiers binaires non lisibles automatiquement — à vérifier à l'œil :")
+        for path in binaries:
+            print(f"  {path}")
+        print()
     if not problems:
         print(f"{len(files)} fichier(s) {portee} — aucune donnée personnelle détectée.")
         return 0

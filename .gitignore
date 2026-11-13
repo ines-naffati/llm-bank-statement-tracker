@@ -27,3 +27,6 @@ venv/
 
 # macOS
 .DS_Store
+
+# Base de demonstration (regeneree par scripts/seed_demo.py)
+demo_data/
