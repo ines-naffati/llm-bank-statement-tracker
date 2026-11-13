@@ -2,13 +2,9 @@
 .env
 
 # Données personnelles: base, sauvegardes, relevés PDF importés.
-# On ignore tout `data/` puis on ré-autorise le seul fichier de structure,
-# sinon un jour un fichier au nom inattendu (.bak, .db-wal...) passerait entre
-# les mailles d'un motif trop précis.
-data/*
-!data/uploads/
-data/uploads/*
-!data/uploads/.gitkeep
+# On ignore tout `data/` : l'application crée elle-même ses dossiers au démarrage,
+# donc rien de ce dossier n'a besoin d'être versionné.
+data/
 
 # Captures d'écran de relevés bancaires (ayant servi de jeu de test)
 capture ecran/
@@ -30,3 +26,6 @@ venv/
 
 # Base de demonstration (regeneree par scripts/seed_demo.py)
 demo_data/
+
+# Outillage local de l'assistant de code
+.claude/
